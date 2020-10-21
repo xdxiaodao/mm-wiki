@@ -3,15 +3,17 @@ package controllers
 import (
 	"errors"
 	"fmt"
-	"mm-wiki/app"
-	"mm-wiki/app/models"
-	"mm-wiki/app/utils"
+	"github.com/astaxie/beego"
+	"github.com/phachon/mm-wiki/app"
+	"github.com/phachon/mm-wiki/app/models"
+	"github.com/phachon/mm-wiki/app/services"
+	"github.com/phachon/mm-wiki/app/utils"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
-	"github.com/astaxie/beego"
+	"github.com/astaxie/beego/logs"
 )
 
 type PageController struct {
@@ -155,17 +157,8 @@ func (this *PageController) Edit() {
 		this.ViewError("文档不存在！")
 	}
 
-	autoFollowDoc := "0"
-	autoFollowConfig, _ := models.ConfigModel.GetConfigByKey(models.Config_Key_AutoFollowDoc)
-	if len(autoFollowConfig) > 0 && autoFollowConfig["value"] == "1" {
-		autoFollowDoc = "1"
-	}
-
-	sendEmail := "0"
-	sendEmailConfig, _ := models.ConfigModel.GetConfigByKey(models.Config_Key_SendEmail)
-	if len(sendEmailConfig) > 0 && sendEmailConfig["value"] == "1" {
-		sendEmail = "1"
-	}
+	autoFollowDoc := models.ConfigModel.GetConfigValueByKey(models.ConfigKeyAutoFollowdoc, "0")
+	sendEmail := models.ConfigModel.GetConfigValueByKey(models.ConfigKeySendEmail, "0")
 
 	this.Data["sendEmail"] = sendEmail
 	this.Data["autoFollowDoc"] = autoFollowDoc
@@ -206,9 +199,9 @@ func (this *PageController) Modify() {
 	if newName == utils.Document_Default_FileName {
 		this.jsonError("文档名称不能为 " + utils.Document_Default_FileName + " ！")
 	}
-	if comment == "" {
-		this.jsonError("必须输入此次修改的备注！")
-	}
+	//if comment == "" {
+	//	this.jsonError("必须输入此次修改的备注！")
+	//}
 
 	document, err := models.DocumentModel.GetDocumentByDocumentId(documentId)
 	if err != nil {
@@ -256,7 +249,7 @@ func (this *PageController) Modify() {
 		"name":         newName,
 		"edit_user_id": this.UserId,
 	}
-	_, err = models.DocumentModel.UpdateDBAndFile(documentId, document, documentContent, updateValue, comment)
+	_, err = models.DocumentModel.UpdateDBAndFile(documentId, spaceId, document, documentContent, updateValue, comment)
 	if err != nil {
 		this.ErrorLog("修改文档 " + documentId + " 失败：" + err.Error())
 		this.jsonError("修改文档失败！")
@@ -272,16 +265,20 @@ func (this *PageController) Modify() {
 				logInfo["message"] = "更新文档时发送邮件通知失败：" + err.Error()
 				logInfo["level"] = models.Log_Level_Error
 				models.LogModel.Insert(logInfo)
-				beego.Error("更新文档时发送邮件通知失败：" + err.Error())
+				logs.Error("更新文档时发送邮件通知失败：" + err.Error())
 			}
 		}(documentId, this.User["username"], comment, url)
 	}
 	// follow doc
 	if isFollowDoc == "1" {
-		go func() {
-			models.FollowModel.FollowDocument(this.UserId, documentId)
-		}()
+		go func(userId string, documentId string) {
+			_, _ = models.FollowModel.FollowDocument(userId, documentId)
+		}(this.UserId, documentId)
 	}
+	// 更新文档索引
+	go func(documentId string) {
+		_ = services.DocIndexService.ForceUpdateDocIndexByDocId(documentId)
+	}(documentId)
 
 	this.InfoLog("修改文档 " + documentId + " 成功")
 	this.jsonSuccess("文档修改成功！", nil, "/document/index?document_id="+documentId)
@@ -419,7 +416,7 @@ func (this *PageController) Export() {
 	absPageFile := utils.Document.GetAbsPageFileByPageFile(pageFile)
 	// pack document file
 	packFiles = append(packFiles, &utils.CompressFileInfo{
-		File: absPageFile,
+		File:       absPageFile,
 		PrefixPath: "",
 	})
 
@@ -436,7 +433,7 @@ func (this *PageController) Export() {
 		path := attachment["path"]
 		attachmentFile := filepath.Join(app.DocumentAbsDir, path)
 		packFile := &utils.CompressFileInfo{
-			File: attachmentFile,
+			File:       attachmentFile,
 			PrefixPath: filepath.Dir(path),
 		}
 		packFiles = append(packFiles, packFile)
@@ -448,7 +445,7 @@ func (this *PageController) Export() {
 		this.ViewError("导出文档失败！")
 	}
 
-	this.Ctx.Output.Download(dest, document["name"] + ".zip")
+	this.Ctx.Output.Download(dest, document["name"]+".zip")
 }
 
 func sendEmail(documentId string, username string, comment string, url string) error {
@@ -460,14 +457,8 @@ func sendEmail(documentId string, username string, comment string, url string) e
 	}
 
 	// get send email open config
-	sendEmailConfig, err := models.ConfigModel.GetConfigByKey(models.Config_Key_SendEmail)
-	if err != nil {
-		return errors.New("发送邮件通知查找发送邮件配置失败：" + err.Error())
-	}
-	if len(sendEmailConfig) == 0 {
-		return nil
-	}
-	if sendEmailConfig["value"] == "0" {
+	sendEmailConfig := models.ConfigModel.GetConfigValueByKey(models.ConfigKeySendEmail, "0")
+	if sendEmailConfig == "0" {
 		return nil
 	}
 
@@ -530,7 +521,7 @@ func sendEmail(documentId string, username string, comment string, url string) e
 	documentValue["comment"] = comment
 	documentValue["url"] = url
 
-	emailTemplate := beego.BConfig.WebConfig.ViewsPath + "system/email/template.html"
+	emailTemplate := beego.BConfig.WebConfig.ViewsPath + "/system/email/template.html"
 	body, err := utils.Email.MakeDocumentHtmlBody(documentValue, emailTemplate)
 	if err != nil {
 		return errors.New("发送邮件生成模板失败：" + err.Error())

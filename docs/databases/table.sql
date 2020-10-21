@@ -175,6 +175,7 @@ DROP TABLE IF EXISTS `mw_log_document`;
 CREATE TABLE `mw_log_document` (
   `log_document_id` int(10) NOT NULL AUTO_INCREMENT COMMENT '文档日志 id',
   `document_id` int(10) NOT NULL DEFAULT '0' COMMENT '文档id',
+  `space_id` int(10) NOT NULL DEFAULT '0' COMMENT '空间id',
   `user_id` int(10) NOT NULL DEFAULT '0' COMMENT '用户id',
   `action` tinyint(3) NOT NULL DEFAULT '1' COMMENT '动作 1 创建 2 修改 3 删除',
   `comment` varchar(255) NOT NULL DEFAULT '' COMMENT '备注信息',
@@ -248,7 +249,7 @@ CREATE TABLE `mw_login_auth` (
   `name` varchar(30) NOT NULL COMMENT '登录认证名称',
   `username_prefix` varchar(30) NOT NULL COMMENT '用户名前缀',
   `url` varchar(200) NOT NULL COMMENT '认证接口 url',
-  `ext_data` char(100) NOT NULL DEFAULT '' COMMENT '额外数据: token=aaa&key=bbb',
+  `ext_data` varchar(500) NOT NULL DEFAULT '' COMMENT '额外数据: token=aaa&key=bbb',
   `is_used` tinyint(1) NOT NULL DEFAULT '0' COMMENT '是否被使用， 0 默认不使用 1 使用',
   `is_delete` tinyint(1) NOT NULL DEFAULT '0' COMMENT '是否删除 0 否 1 是',
   `create_time` int(11) NOT NULL COMMENT '创建时间',

@@ -2,8 +2,10 @@ package models
 
 import (
 	"fmt"
+	"github.com/astaxie/beego/logs"
+	"github.com/phachon/mm-wiki/app/utils"
 	"github.com/snail007/go-activerecord/mysql"
-	"mm-wiki/app/utils"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -119,8 +121,43 @@ func (d *Document) GetDocumentByParentIdAndSpaceId(parentId string, spaceId stri
 	return
 }
 
+// get document by name and spaceId
+func (d *Document) GetDocumentsByParentIdAndSpaceIdOnly(parentId string, spaceId string) (document []map[string]string, err error) {
+	db := G.DB()
+	var rs *mysql.ResultSet
+	rs, err = db.Query(db.AR().From(Table_Document_Name).Where(map[string]interface{}{
+		"space_id":  spaceId,
+		"parent_id": parentId,
+		"is_delete": Document_Delete_False,
+	}))
+	if err != nil {
+		return
+	}
+	document = rs.Rows()
+	return
+}
+
+// get max sequence
+func (d *Document) GetDocumentMaxSequence(parentId string, spaceId string) (sequence int, err error) {
+	db := G.DB()
+	var rs *mysql.ResultSet
+	rs, err = db.Query(db.AR().From(Table_Document_Name).Where(map[string]interface{}{
+		"space_id":  spaceId,
+		"parent_id": parentId,
+	}).OrderBy("sequence", "desc").Limit(0, 1))
+
+	if err != nil {
+		return
+	}
+
+	document := rs.Row()
+	sequenceStr := document["sequence"]
+	sequence, err = strconv.Atoi(sequenceStr)
+	return
+}
+
 // delete document by document_id
-func (d *Document) DeleteDBAndFile(documentId string, userId string, pageFile string, docType string) (err error) {
+func (d *Document) DeleteDBAndFile(documentId string, spaceId string, userId string, pageFile string, docType string) (err error) {
 	db := G.DB()
 	tx, err := db.Begin(db.Config)
 	if err != nil {
@@ -151,19 +188,28 @@ func (d *Document) DeleteDBAndFile(documentId string, userId string, pageFile st
 	}
 
 	// create document log
-	go func() {
-		LogDocumentModel.DeleteAction(userId, documentId)
-	}()
+	go func(userId, documentId string, spaceId string) {
+		_, err := LogDocumentModel.DeleteAction(userId, documentId, spaceId)
+		if err != nil {
+			logs.Error("delete document add log err=%s", err.Error())
+		}
+	}(userId, documentId, spaceId)
 
 	// delete follow doc
-	go func() {
-		FollowModel.DeleteByObjectIdType(documentId, fmt.Sprintf("%d", Follow_Type_Doc))
-	}()
+	go func(documentId string) {
+		err := FollowModel.DeleteByObjectIdType(documentId, fmt.Sprintf("%d", Follow_Type_Doc))
+		if err != nil {
+			logs.Error("delete follow document err=%s", err.Error())
+		}
+	}(documentId)
 
 	// delete collect doc
-	go func() {
-		CollectionModel.DeleteByResourceIdType(documentId, fmt.Sprintf("%d", Collection_Type_Doc))
-	}()
+	go func(documentId string) {
+		err := CollectionModel.DeleteByResourceIdType(documentId, fmt.Sprintf("%d", Collection_Type_Doc))
+		if err != nil {
+			logs.Error("delete collect document err=%s", err.Error())
+		}
+	}(documentId)
 
 	return
 }
@@ -177,6 +223,18 @@ func (d *Document) Insert(documentValue map[string]interface{}) (id int64, err e
 	if err != nil {
 		return
 	}
+
+	// 处理同级排序编号
+	parentId := documentValue["parent_id"].(string)
+	spaceId := documentValue["space_id"].(string)
+
+	sequence, err := d.GetDocumentMaxSequence(parentId, spaceId)
+	if err != nil {
+		sequence = 0
+	}
+
+	sequence += 1
+	documentValue["sequence"] = strconv.Itoa(sequence)
 
 	var rs *mysql.ResultSet
 	documentValue["create_time"] = time.Now().Unix()
@@ -207,20 +265,27 @@ func (d *Document) Insert(documentValue map[string]interface{}) (id int64, err e
 		return
 	}
 
+	userId := documentValue["create_user_id"].(string)
 	// create document log
-	go func() {
-		LogDocumentModel.CreateAction(documentValue["create_user_id"].(string), fmt.Sprintf("%d", id))
-	}()
+	go func(userId, documentId, spaceId string) {
+		_, err := LogDocumentModel.CreateAction(userId, documentId, spaceId)
+		if err != nil {
+			logs.Error("create document add log err=%s", err.Error())
+		}
+	}(userId, fmt.Sprintf("%d", id), spaceId)
 
 	// follow document
-	go func() {
-		FollowModel.CreateAutoFollowDocument(documentValue["create_user_id"].(string), fmt.Sprintf("%d", id))
-	}()
+	go func(userId, documentId string) {
+		_, err := FollowModel.CreateAutoFollowDocument(userId, documentId)
+		if err != nil {
+			logs.Error("follow document err=%s", err.Error())
+		}
+	}(userId, fmt.Sprintf("%d", id))
 	return
 }
 
 // update document by document_id
-func (d *Document) Update(documentId string, documentValue map[string]interface{}, comment string) (id int64, err error) {
+func (d *Document) Update(documentId string, documentValue map[string]interface{}, comment string, spaceId string) (id int64, err error) {
 	db := G.DB()
 	var rs *mysql.ResultSet
 	documentValue["update_time"] = time.Now().Unix()
@@ -233,20 +298,50 @@ func (d *Document) Update(documentId string, documentValue map[string]interface{
 	}
 	id = rs.LastInsertId
 
-	// create document log
-	go func() {
-		LogDocumentModel.UpdateAction(documentValue["edit_user_id"].(string), documentId, comment)
-	}()
+	// update document log
+	go func(editUserId string, documentId string, comment string, spaceId string) {
+		_, err := LogDocumentModel.UpdateAction(editUserId, documentId, comment, spaceId)
+		if err != nil {
+			logs.Error("update document add log err=%s", err.Error())
+		}
+	}(documentValue["edit_user_id"].(string), documentId, comment, spaceId)
 
 	// follow document
-	go func() {
-		FollowModel.CreateAutoFollowDocument(documentValue["edit_user_id"].(string), documentId)
-	}()
+	go func(editUserId string, documentId string) {
+		_, err := FollowModel.CreateAutoFollowDocument(editUserId, documentId)
+		if err != nil {
+			logs.Error("follow document err=%s", err.Error())
+		}
+	}(documentValue["edit_user_id"].(string), documentId)
+	return
+}
+
+// update document by spaceId and >= sequence
+// 批量移动更新文档序号
+func (d *Document) MoveSequenceBySpaceIdAndGtSequence(spaceId string, startSequence int, n int) (id int64, err error) {
+	db := G.DB()
+	var rs *mysql.ResultSet
+	//documentValue := map[string]interface{}{
+	//	"sequence": fmt.Sprintf("(sequence+%d)", n),
+	//	"update_time": time.Now().Unix(),
+	//}
+	updateTime := time.Now().Unix()
+	sql := fmt.Sprintf(
+		"update mw_%s set sequence=sequence+%d, update_time=%d where space_id=%s and sequence >= %d and is_delete=%d",
+		Table_Document_Name, n, updateTime, spaceId, startSequence, Document_Delete_False,
+	)
+	rs, err = db.ExecSQL(sql)
+	if err != nil {
+		logs.Error(err.Error())
+		return
+	}
+	id = rs.LastInsertId
 	return
 }
 
 // move document
-func (d *Document) MoveDBAndFile(documentId string, updateValue map[string]interface{}, oldPageFile string, newPageFile string, docType string, comment string) (id int64, err error) {
+func (d *Document) MoveDBAndFile(documentId string, spaceId string, updateValue map[string]interface{},
+	oldPageFile string, newPageFile string, docType string, comment string) (id int64, err error) {
 
 	db := G.DB()
 	tx, err := db.Begin(db.Config)
@@ -276,15 +371,18 @@ func (d *Document) MoveDBAndFile(documentId string, updateValue map[string]inter
 	}
 
 	// create document log
-	go func() {
-		LogDocumentModel.UpdateAction(updateValue["edit_user_id"].(string), documentId, comment)
-	}()
+	go func(userId, documentId, comment string, spaceId string) {
+		_, err := LogDocumentModel.UpdateAction(updateValue["edit_user_id"].(string), documentId, comment, spaceId)
+		if err != nil {
+			logs.Error("update document add log err=%s", err.Error())
+		}
+	}(updateValue["edit_user_id"].(string), documentId, comment, spaceId)
 
 	return
 }
 
 // update document by document_id
-func (d *Document) UpdateDBAndFile(documentId string, document map[string]string, documentContent string, updateValue map[string]interface{}, comment string) (id int64, err error) {
+func (d *Document) UpdateDBAndFile(documentId string, spaceId string, document map[string]string, documentContent string, updateValue map[string]interface{}, comment string) (id int64, err error) {
 
 	// get document page file
 	_, oldPageFile, err := DocumentModel.GetParentDocumentsByDocument(document)
@@ -328,14 +426,14 @@ func (d *Document) UpdateDBAndFile(documentId string, document map[string]string
 	}
 
 	// create document log
-	go func() {
-		LogDocumentModel.UpdateAction(updateValue["edit_user_id"].(string), documentId, comment)
-	}()
+	go func(documentId string, comment string, spaceId string) {
+		_, _ = LogDocumentModel.UpdateAction(updateValue["edit_user_id"].(string), documentId, comment, spaceId)
+	}(documentId, comment, spaceId)
 
 	// create follow doc
-	go func() {
-		FollowModel.CreateAutoFollowDocument(updateValue["edit_user_id"].(string), documentId)
-	}()
+	go func(documentId string) {
+		_, _ = FollowModel.CreateAutoFollowDocument(updateValue["edit_user_id"].(string), documentId)
+	}(documentId)
 
 	return
 }
@@ -403,7 +501,7 @@ func (d *Document) GetAllSpaceDocuments(spaceId string) (documents []map[string]
 			"space_id":    spaceId,
 			"parent_id >": "0",
 			"is_delete":   Document_Delete_False,
-		}))
+		}).OrderBy("sequence", "ASC"))
 	if err != nil {
 		return
 	}
@@ -528,6 +626,19 @@ func (d *Document) GetAllDocumentsByDocumentIds(documentIds []string) (documents
 	return
 }
 
+func (d *Document) GetAllDocuments() (documents []map[string]string, err error) {
+	db := G.DB()
+	var rs *mysql.ResultSet
+	rs, err = db.Query(db.AR().From(Table_Document_Name).Where(map[string]interface{}{
+		"is_delete": Document_Delete_False,
+	}))
+	if err != nil {
+		return
+	}
+	documents = rs.Rows()
+	return
+}
+
 func (d *Document) GetParentDocumentsByDocument(document map[string]string) (parentDocuments []map[string]string, pageFile string, err error) {
 
 	if document["parent_id"] == "0" {
@@ -628,4 +739,19 @@ func (d *Document) GetDocumentGroupEditUserId() (documents []map[string]string, 
 	}
 	documents = rs.Rows()
 	return
+}
+
+// 根据文档信息获取文档内容和文件地址
+func (d *Document) GetDocumentContentByDocument(doc map[string]string) (content string, pageFile string, err error) {
+	// get document page file
+	_, pageFile, err = DocumentModel.GetParentDocumentsByDocument(doc)
+	if err != nil {
+		return content, pageFile, err
+	}
+	// get document content
+	content, err = utils.Document.GetContentByPageFile(pageFile)
+	if err != nil {
+		return content, pageFile, err
+	}
+	return content, pageFile, nil
 }

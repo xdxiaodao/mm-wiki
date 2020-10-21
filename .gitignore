@@ -9,8 +9,13 @@ mm-wiki
 .mmwiki.sessions/
 conf/mm-wiki.conf
 mm-wiki.conf
+release/
 release-*
 data/
 install/install
 install/install.exe
 install.lock
+
+.idea/
+
+node_modules/

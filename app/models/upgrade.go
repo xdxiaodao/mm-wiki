@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"github.com/astaxie/beego"
-	"mm-wiki/app/utils"
+	"github.com/astaxie/beego/logs"
+	"github.com/phachon/mm-wiki/app/utils"
+	"github.com/phachon/mm-wiki/global"
+	"time"
 )
 
 type Upgrade struct {
@@ -28,10 +31,16 @@ var (
 func (up *Upgrade) initHandleFunc() {
 	// v0 ~ v0.1.2
 	upgradeMap = append(upgradeMap, &upgradeHandle{Version: "v0.1.2", Func: up.v0ToV012})
+
 	// v0.1.2 ~ v0.1.3
 	upgradeMap = append(upgradeMap, &upgradeHandle{Version: "v0.1.3", Func: up.v012ToV013})
-	// v0.1.8 ~ v0.2.1
-	//upgradeMap = append(upgradeMap, &upgradeHandle{Version: "v0.2.1", Func: up.v018ToV021})
+
+	// v0.1.3 ~ v0.1.8
+	upgradeMap = append(upgradeMap, &upgradeHandle{Version: "v0.1.8", Func: up.v013ToV018})
+
+	// v0.1.8 ~ v0.2.0
+	upgradeMap = append(upgradeMap, &upgradeHandle{Version: "v0.2.0", Func: up.v018ToV020})
+
 	// v0.2.1 ~ v0.2.7
 	//upgradeMap = append(upgradeMap, &upgradeHandle{Version: "v0.2.7", Func: up.v021ToV027})
 	// v0.2.7 ~ v0.3.3
@@ -45,7 +54,7 @@ func (up *Upgrade) Start(dbVersion string) (err error) {
 	var tmpVersion = dbVersion
 	for _, upHandle := range upgradeMap {
 		// upgrade now version, exit
-		if tmpVersion == Version {
+		if tmpVersion == global.SYSTEM_VERSION {
 			break
 		}
 		// tmpVersion < upHandle.version
@@ -53,20 +62,28 @@ func (up *Upgrade) Start(dbVersion string) (err error) {
 			// upgrade handle
 			err = upHandle.Func()
 			if err != nil {
-				beego.Error("upgrade to " + upHandle.Version + " error: " + err.Error())
+				logs.Error("upgrade to " + upHandle.Version + " error: " + err.Error())
 				return errors.New("upgrade to " + upHandle.Version + " error: " + err.Error())
 			}
 			// update system database version
 			err = up.upgradeAfter(upHandle.Version)
 			if err != nil {
-				beego.Error("upgrade to database " + upHandle.Version + " error: " + err.Error())
+				logs.Error("upgrade to database " + upHandle.Version + " error: " + err.Error())
 				return errors.New("upgrade to database " + upHandle.Version + " error: " + err.Error())
 			}
-			beego.Info("upgrade to " + upHandle.Version + " success")
+			logs.Info("upgrade to " + upHandle.Version + " success")
 			// update version record
 			tmpVersion = upHandle.Version
 		}
 	}
+	// last update current version
+	err = up.upgradeAfter(global.SYSTEM_VERSION)
+	if err != nil {
+		logs.Error("upgrade to database " + global.SYSTEM_VERSION + " error: " + err.Error())
+		return errors.New("upgrade to database " + global.SYSTEM_VERSION + " error: " + err.Error())
+	}
+	logs.Info("upgrade finish, version: " + global.SYSTEM_VERSION)
+
 	return nil
 }
 
@@ -121,8 +138,70 @@ func (up *Upgrade) v012ToV013() error {
 	return up.createTable(sql)
 }
 
-// upgrade v0.1.8 ~ v0.2.1
-func (up *Upgrade) v018ToV021() error {
+// upgrade v0.1.3 ~ v0.1.8
+func (up *Upgrade) v013ToV018() error {
+	db := G.DB()
+
+	// 1. 文档日志表增加 space_id 字段
+	// `space_id` int(10) NOT NULL DEFAULT '0' COMMENT '空间id'
+	_, err := db.Exec(db.AR().Raw("alter table mw_log_document add `space_id` int(10) NOT NULL DEFAULT '0' COMMENT '空间ID'"))
+	if err == nil {
+		// 文档日志表里的 space_id
+		_, err = db.Exec(db.AR().Raw("update mw_log_document as logDocment, mw_document as document set logDocment.space_id = document.space_id WHERE logDocment.document_id = document.document_id"))
+		if err != nil {
+			return err
+		}
+	}
+
+	// 2. 修改文档表里的排序号，需要先判断排序号是否已经修改过（只修改sequence=0）
+	_, err = db.Exec(db.AR().Raw("update mw_document set mw_document.sequence = mw_document.document_id WHERE sequence=0"))
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// upgrade v0.1.8 ~ v0.2.0
+func (up *Upgrade) v018ToV020() error {
+	// 配置表增加数据
+	db := G.DB()
+	updateTime := time.Now().Unix()
+	// 1. 配置表增加全文搜索开关
+	insertSql := fmt.Sprintf("INSERT INTO `mw_config` (name, `key`, value, create_time, update_time) VALUES ('开启全文搜索', 'fulltext_search_open', '1', %d, %d)", updateTime, updateTime)
+	_, err := db.Exec(db.AR().Raw(insertSql))
+	if err != nil {
+		return err
+	}
+	// 2. 配置表增加搜索索引时间间隔
+	insertSql = fmt.Sprintf("INSERT INTO `mw_config` (name, `key`, value, create_time, update_time) VALUES ('索引更新间隔', 'doc_search_timer', '3600', %d, %d)", updateTime, updateTime)
+	_, err = db.Exec(db.AR().Raw(insertSql))
+	if err != nil {
+		return err
+	}
+	// 3. 配置表增加系统名称配置
+	insertSql = fmt.Sprintf("INSERT INTO `mw_config` (name, `key`, value, create_time, update_time) VALUES ('系统名称', 'system_name', 'Markdown Mini Wiki', %d, %d)", updateTime, updateTime)
+	_, err = db.Exec(db.AR().Raw(insertSql))
+	if err != nil {
+		return err
+	}
+	// 4. 权限表增加导入联系人权限
+	// INSERT INTO mw_privilege (privilege_id, name, parent_id, type, controller, action, icon, target, is_display, sequence, create_time, update_time) VALUES (93, '导入联系人', 71, 'controller', 'contact', 'import', 'glyphicon-list', '', 0, 97, unix_timestamp(now()), unix_timestamp(now()));
+	privilege := map[string]interface{}{
+		"name":       "导入联系人",
+		"type":       "controller",
+		"parent_id":  71,
+		"controller": "contact",
+		"action":     "import",
+		"target":     "",
+		"icon":       "glyphicon-list",
+		"is_display": 0,
+		"sequence":   97,
+	}
+	_, err = PrivilegeModel.InsertNotExists(privilege)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -156,7 +235,7 @@ func (up *Upgrade) createTable(sqlTable string) error {
 
 func (up *Upgrade) upgradeAfter(version string) (err error) {
 	// update system version
-	config, err := ConfigModel.GetConfigByKey(Config_Key_SystemVersion)
+	config, err := ConfigModel.GetConfigByKey(ConfigKeySystemVersion)
 	if err != nil {
 		return
 	}
@@ -168,7 +247,7 @@ func (up *Upgrade) upgradeAfter(version string) (err error) {
 		}
 		_, err = ConfigModel.Insert(configValue)
 	} else {
-		_, err = ConfigModel.UpdateByKey(Config_Key_SystemVersion, version)
+		_, err = ConfigModel.UpdateByKey(ConfigKeySystemVersion, version)
 	}
 
 	return err

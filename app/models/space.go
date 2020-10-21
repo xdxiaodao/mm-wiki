@@ -2,8 +2,8 @@ package models
 
 import (
 	"fmt"
+	"github.com/phachon/mm-wiki/app/utils"
 	"github.com/snail007/go-activerecord/mysql"
-	"mm-wiki/app/utils"
 	"time"
 )
 
@@ -256,6 +256,23 @@ func (s *Space) GetSpaces() (spaces []map[string]string, err error) {
 	rs, err = db.Query(
 		db.AR().From(Table_Space_Name).Where(map[string]interface{}{
 			"is_delete": Space_Delete_False,
+		}))
+	if err != nil {
+		return
+	}
+	spaces = rs.Rows()
+	return
+}
+
+// get spaces by visitLevel
+func (s *Space) GetSpacesByVisitLevel(visitLevel string) (spaces []map[string]string, err error) {
+
+	db := G.DB()
+	var rs *mysql.ResultSet
+	rs, err = db.Query(
+		db.AR().From(Table_Space_Name).Where(map[string]interface{}{
+			"visit_level": visitLevel,
+			"is_delete":   Space_Delete_False,
 		}))
 	if err != nil {
 		return

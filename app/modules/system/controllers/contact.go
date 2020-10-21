@@ -4,8 +4,8 @@ import (
 	"strings"
 	"time"
 
-	"mm-wiki/app/models"
-	"mm-wiki/app/utils"
+	"github.com/phachon/mm-wiki/app/models"
+	"github.com/phachon/mm-wiki/app/utils"
 
 	"github.com/astaxie/beego/validation"
 )
@@ -31,15 +31,6 @@ func (this *ContactController) Save() {
 	v := validation.Validation{}
 	if name == "" {
 		this.jsonError("联系人姓名不能为空！")
-	}
-	if position == "" {
-		this.jsonError("职位不能为空！")
-	}
-	if mobile == "" {
-		this.jsonError("联系电话不能为空！")
-	}
-	if !v.Phone(mobile, "mobile").Ok {
-		this.jsonError("联系电话格式不正确！")
 	}
 	if email == "" {
 		this.jsonError("邮箱不能为空！")
@@ -172,4 +163,37 @@ func (this *ContactController) Delete() {
 
 	this.InfoLog("删除联系人 " + contactId + " 成功")
 	this.jsonSuccess("删除联系人成功", nil, "/system/contact/list")
+}
+
+// 从用户导入联系人
+func (this *ContactController) Import() {
+
+	keywords := map[string]string{}
+	page, _ := this.GetInt("page", 1)
+	username := strings.TrimSpace(this.GetString("username", ""))
+	number, _ := this.GetRangeInt("number", 20, 10, 100)
+	if username != "" {
+		keywords["username"] = username
+	}
+	limit := (page - 1) * number
+
+	var err error
+	var count int64
+	var users []map[string]string
+	if len(keywords) != 0 {
+		count, err = models.UserModel.CountUsersByKeywords(keywords)
+		users, err = models.UserModel.GetUsersByKeywordsAndLimit(keywords, limit, number)
+	} else {
+		count, err = models.UserModel.CountUsers()
+		users, err = models.UserModel.GetUsersByLimit(limit, number)
+	}
+	if err != nil {
+		this.ErrorLog("获取用户列表失败: " + err.Error())
+		this.ViewError("获取用户列表失败", "/system/main/index")
+	}
+
+	this.Data["users"] = users
+	this.Data["username"] = username
+	this.SetPaginator(number, count)
+	this.viewLayout("contact/import", "contact")
 }

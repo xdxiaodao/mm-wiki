@@ -2,7 +2,7 @@ package controllers
 
 import (
 	"fmt"
-	"mm-wiki/app/models"
+	"github.com/phachon/mm-wiki/app/models"
 )
 
 type MainController struct {
@@ -43,12 +43,12 @@ func (this *MainController) Index() {
 			this.ViewError("查找用户权限失败！")
 		}
 	}
-
 	this.Data["menus"] = menus
 	this.Data["controllers"] = controllers
 	this.viewLayout("main/index", "main")
 }
 
 func (this *MainController) Default() {
+
 	this.viewLayout("main/default", "default")
 }

@@ -2,7 +2,7 @@ package controllers
 
 import (
 	"github.com/astaxie/beego/validation"
-	"mm-wiki/app/models"
+	"github.com/phachon/mm-wiki/app/models"
 	"strings"
 )
 
@@ -89,12 +89,12 @@ func (this *ProfileController) Modify() {
 	if mobile == "" {
 		this.jsonError("手机号不能为空！")
 	}
-	if !v.Mobile(mobile, "mobile").Ok {
-		this.jsonError("手机号格式不正确！")
-	}
-	if phone != "" && !v.Phone(phone, "phone").Ok {
-		this.jsonError("电话格式不正确！")
-	}
+	//if !v.Mobile(mobile, "mobile").Ok {
+	//	this.jsonError("手机号格式不正确！")
+	//}
+	//if phone != "" && !v.Phone(phone, "phone").Ok {
+	//	this.jsonError("电话格式不正确！")
+	//}
 
 	_, err := models.UserModel.Update(this.UserId, map[string]interface{}{
 		"given_name": givenName,
@@ -204,11 +204,7 @@ func (this *ProfileController) FollowDoc() {
 		}
 	}
 
-	autoFollowDoc := "0"
-	autoFollowConfig, _ := models.ConfigModel.GetConfigByKey(models.Config_Key_AutoFollowDoc)
-	if len(autoFollowConfig) > 0 && autoFollowConfig["value"] == "1" {
-		autoFollowDoc = "1"
-	}
+	autoFollowDoc := models.ConfigModel.GetConfigValueByKey(models.ConfigKeyAutoFollowdoc, "0")
 
 	this.Data["followDocuments"] = followDocuments
 	this.Data["count"] = len(documents)

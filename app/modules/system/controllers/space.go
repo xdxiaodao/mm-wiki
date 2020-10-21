@@ -2,9 +2,9 @@ package controllers
 
 import (
 	"fmt"
-	"mm-wiki/app"
-	"mm-wiki/app/models"
-	"mm-wiki/app/utils"
+	"github.com/phachon/mm-wiki/app"
+	"github.com/phachon/mm-wiki/app/models"
+	"github.com/phachon/mm-wiki/app/utils"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -303,7 +303,8 @@ func (this *SpaceController) Delete() {
 				this.ErrorLog("删除空间 " + spaceId + " 获取空间文件失败: " + err.Error())
 				this.jsonError("删除空间失败")
 			}
-			err = models.DocumentModel.DeleteDBAndFile(documents[0]["document_id"], this.UserId, pageFile, fmt.Sprintf("%d", models.Document_Type_Dir))
+			err = models.DocumentModel.DeleteDBAndFile(documents[0]["document_id"], spaceId, this.UserId,
+				pageFile, fmt.Sprintf("%d", models.Document_Type_Dir))
 			// delete space document attachments
 			_ = models.AttachmentModel.DeleteAttachmentsDBFileByDocumentId(documents[0]["document_id"])
 		}
